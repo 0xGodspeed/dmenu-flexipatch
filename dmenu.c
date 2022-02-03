@@ -995,9 +995,11 @@ keypress(XKeyEvent *ev)
 			                  utf8, utf8, win, CurrentTime);
 			return;
 		case XK_Left:
+		case XK_KP_Left:
 			movewordedge(-1);
 			goto draw;
 		case XK_Right:
+		case XK_KP_Right:
 			movewordedge(+1);
 			goto draw;
 		case XK_Return:
@@ -1048,6 +1050,7 @@ insert:
 			insert(buf, len);
 		break;
 	case XK_Delete:
+	case XK_KP_Delete:
 		if (text[cursor] == '\0')
 			return;
 		cursor = nextrune(+1);
@@ -1058,6 +1061,7 @@ insert:
 		insert(NULL, nextrune(-1) - cursor);
 		break;
 	case XK_End:
+	case XK_KP_End:
 		if (text[cursor] != '\0') {
 			cursor = strlen(text);
 			break;
@@ -1077,6 +1081,7 @@ insert:
 		cleanup();
 		exit(1);
 	case XK_Home:
+	case XK_KP_Home:
 		if (sel == matches) {
 			cursor = 0;
 			break;
@@ -1085,6 +1090,7 @@ insert:
 		calcoffsets();
 		break;
 	case XK_Left:
+	case XK_KP_Left:
 		#if GRID_PATCH && GRIDNAV_PATCH
 		if (columns > 1) {
 			if (!sel)
@@ -1113,18 +1119,21 @@ insert:
 			return;
 		/* fallthrough */
 	case XK_Up:
+	case XK_KP_Up:
 		if (sel && sel->left && (sel = sel->left)->right == curr) {
 			curr = prev;
 			calcoffsets();
 		}
 		break;
 	case XK_Next:
+	case XK_KP_Next:
 		if (!next)
 			return;
 		sel = curr = next;
 		calcoffsets();
 		break;
 	case XK_Prior:
+	case XK_KP_Prior:
 		if (!prev)
 			return;
 		sel = curr = prev;
@@ -1202,6 +1211,7 @@ insert:
 		#endif // MULTI_SELECTION_PATCH
 		break;
 	case XK_Right:
+	case XK_KP_Right:
 		#if GRID_PATCH && GRIDNAV_PATCH
 		if (columns > 1) {
 			if (!sel)
@@ -1230,6 +1240,7 @@ insert:
 			return;
 		/* fallthrough */
 	case XK_Down:
+	case XK_KP_Down:
 		if (sel && sel->right && (sel = sel->right) == next) {
 			curr = next;
 			calcoffsets();
@@ -1237,7 +1248,14 @@ insert:
 		break;
 	case XK_Tab:
 		#if PREFIXCOMPLETION_PATCH
-		if (!matches) break; /* cannot complete no matches */
+		if (!matches)
+			break; /* cannot complete no matches */
+		#if FUZZYMATCH_PATCH
+		/* only do tab completion if all matches start with prefix */
+		for (item = matches; item && item->text; item = item->right)
+			if (item->text[0] != text[0])
+				goto draw;
+		#endif // FUZZYMATCH_PATCH
 		strncpy(text, matches->text, sizeof text - 1);
 		text[sizeof text - 1] = '\0';
 		len = cursor = strlen(text); /* length of longest common prefix */
@@ -1652,7 +1670,7 @@ setup(void)
 		#endif // MOUSE_SUPPORT_PATCH
 	;
 	#if BORDER_PATCH
-	win = XCreateWindow(dpy, parentwin, x, y, mw, mh, border_width,
+	win = XCreateWindow(dpy, parentwin, x, y - (topbar ? 0 : border_width * 2), mw - border_width * 2, mh, border_width,
 	#else
 	win = XCreateWindow(dpy, parentwin, x, y, mw, mh, 0,
 	#endif // BORDER_PATCH
@@ -1806,6 +1824,28 @@ main(int argc, char *argv[])
 	#if !NON_BLOCKING_STDIN_PATCH
 	int fast = 0;
 	#endif // NON_BLOCKING_STDIN_PATCH
+
+	#if XRESOURCES_PATCH
+	if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
+		fputs("warning: no locale support\n", stderr);
+	if (!(dpy = XOpenDisplay(NULL)))
+		die("cannot open display");
+	screen = DefaultScreen(dpy);
+	root = RootWindow(dpy, screen);
+	if (!embed || !(parentwin = strtol(embed, NULL, 0)))
+		parentwin = root;
+	if (!XGetWindowAttributes(dpy, parentwin, &wa))
+		die("could not get embedding window attributes: 0x%lx",
+		    parentwin);
+
+	#if ALPHA_PATCH
+	xinitvisual();
+	drw = drw_create(dpy, screen, root, wa.width, wa.height, visual, depth, cmap);
+	#else
+	drw = drw_create(dpy, screen, root, wa.width, wa.height);
+	#endif // ALPHA_PATCH
+	readxresources();
+	#endif // XRESOURCES_PATCH
 
 	for (i = 1; i < argc; i++)
 		/* these options take no arguments */
@@ -1972,6 +2012,15 @@ main(int argc, char *argv[])
 		else
 			usage();
 
+	#if XRESOURCES_PATCH
+	#if PANGO_PATCH
+	if (!drw_font_create(drw, font))
+		die("no fonts could be loaded.");
+	#else
+	if (!drw_fontset_create(drw, (const char**)fonts, LENGTH(fonts)))
+		die("no fonts could be loaded.");
+	#endif // PANGO_PATCH
+	#else // !XRESOURCES_PATCH
 	if (!setlocale(LC_CTYPE, "") || !XSupportsLocale())
 		fputs("warning: no locale support\n", stderr);
 	if (!(dpy = XOpenDisplay(NULL)))
@@ -1990,22 +2039,16 @@ main(int argc, char *argv[])
 	#else
 	drw = drw_create(dpy, screen, root, wa.width, wa.height);
 	#endif // ALPHA_PATCH
-	#if XRESOURCES_PATCH
-	readxresources();
+
 	#if PANGO_PATCH
-	if (!drw_font_create(drw, font))
-		die("no fonts could be loaded.");
-	#else
-	if (!drw_fontset_create(drw, (const char**)fonts, LENGTH(fonts)))
-		die("no fonts could be loaded.");
-	#endif // PANGO_PATCH
-	#elif PANGO_PATCH
 	if (!drw_font_create(drw, font))
 		die("no fonts could be loaded.");
 	#else
 	if (!drw_fontset_create(drw, fonts, LENGTH(fonts)))
 		die("no fonts could be loaded.");
-	#endif // XRESOURCES_PATCH | PANGO_PATCH
+	#endif // PANGO_PATCH
+	#endif // XRESOURCES_PATCH
+
 	#if PANGO_PATCH
 	lrpad = drw->font->h;
 	#else
