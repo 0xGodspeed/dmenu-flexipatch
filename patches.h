@@ -87,7 +87,7 @@
 /* This will automatically sort the search result so that high priority items are shown first.
  * https://tools.suckless.org/dmenu/patches/highpriority/
  */
-#define HIGHPRIORITY_PATCH 0
+#define HIGHPRIORITY_PATCH 1
 
 /* This patch causes dmenu to print out the current text each time a key is pressed.
  * https://tools.suckless.org/dmenu/patches/incremental/
